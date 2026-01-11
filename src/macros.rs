@@ -1,4 +1,6 @@
-use tiny_http::Request;
+use tiny_http::{Request, Response, ResponseBox};
+
+use crate::data::Database;
 #[macro_export]
 macro_rules! to_json {
     ($obj:expr) => {{
@@ -80,9 +82,7 @@ pub fn get_auth(req: &Request) -> Option<(String, String)> {
         return None;
     };
 
-    let Some((username, password)) = user_password_text.split_once(':') else {
-        return None;
-    };
+    let (username, password) = user_password_text.split_once(':')?;
 
     Some((username.to_string(), password.to_string()))
 }
@@ -90,42 +90,48 @@ pub fn get_auth(req: &Request) -> Option<(String, String)> {
 #[macro_export]
 macro_rules! try_auth {
     ($db:expr, $req:expr) => {{
-        use sha2::{Digest, Sha256};
-
-        let Some((user, pass)) = crate::macros::get_auth($req) else {
-            return Response::from_string("")
-                .with_header(
-                    tiny_http::Header::from_bytes(
-                        &b"WWW-Authenticate"[..],
-                        &b"Basic realm=\"my realm\""[..],
-                    )
-                    .unwrap(),
-                )
-                .with_status_code(401)
-                .boxed();
-        };
-
-        let mut hasher = Sha256::new();
-        hasher.update(pass.as_bytes());
-        let result = hasher.finalize();
-        let base64_pass = base64::encode(result);
-
-        let user: Option<String> = $db
-            .get_user(&user, &base64_pass);
-
-        let Some(user) = user else {
-            return Response::from_string("Invalid login")
-                .with_header(
-                    tiny_http::Header::from_bytes(
-                        &b"WWW-Authenticate"[..],
-                        &b"Basic realm=\"my realm\""[..],
-                    )
-                    .unwrap(),
-                )
-                .with_status_code(401)
-                .boxed();
-        };
-
-        user
+        match crate::macros::try_auth($db, $req) {
+            Ok(v) => v,
+            Err(e) => return e,
+        }
     }};
+}
+
+pub fn try_auth(db: &Database, req: &Request) -> Result<String, ResponseBox> {
+    use sha2::{Digest, Sha256};
+
+    let Some((user, pass)) = crate::macros::get_auth(req) else {
+        return Err(Response::from_string("")
+            .with_header(
+                tiny_http::Header::from_bytes(
+                    &b"WWW-Authenticate"[..],
+                    &b"Basic realm=\"my realm\""[..],
+                )
+                .unwrap(),
+            )
+            .with_status_code(401)
+            .boxed());
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(pass.as_bytes());
+    let result = hasher.finalize();
+    let base64_pass = base64::encode(result);
+
+    let user: Option<String> = db.get_user(&user, &base64_pass);
+
+    let Some(user) = user else {
+        return Err(Response::from_string("Invalid login")
+            .with_header(
+                tiny_http::Header::from_bytes(
+                    &b"WWW-Authenticate"[..],
+                    &b"Basic realm=\"my realm\""[..],
+                )
+                .unwrap(),
+            )
+            .with_status_code(401)
+            .boxed());
+    };
+
+    Ok(user)
 }

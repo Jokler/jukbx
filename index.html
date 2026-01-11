@@ -177,7 +177,9 @@
       localStorage.setItem("thisUser", thisUser);
 
       return thisUser;
-    }
+      } else {
+          alert("Failed to sign in");
+      }
   }
 
   async function loadAddPage() {
@@ -223,41 +225,81 @@
     dropzone.ondrop = async (ev) => {
       ev.preventDefault();
 
+      let item = ev.dataTransfer.items[0].webkitGetAsEntry();
+
+      let stack = [item];
+      while((item = stack.pop()) != null) {
+        console.log(`popped item ${item}`);
+        if (item.isDirectory) {
+          console.log("directory");
+          let directoryReader = item.createReader();
+          directoryReader.readEntries((entries) => {
+            entries.forEach((entry) => {
+              console.log(`pushing item ${entry}`);
+              console.log(entry);
+              stack.push(entry);
+            });
+          });
+        } else {
+          console.log("file");
+          const file = item.file();
+          console.log(file.name);
+
+          let dataUrl = await toDataUrl(file);
+          let data = await toBase64(file);
+          let probeData = await api("/api/probeSong", { song_data_base64: data });
+          console.log(probeData);
+
+          let songAddRow = addSongRowTemplate.content.cloneNode(true);
+          songAddRow.querySelector("audio").src = dataUrl;
+          songAddRow.querySelector("#filename").innerText = file.name;
+          songAddRow.querySelector("#title").value = probeData.title;
+          songAddRow.querySelector("#artists").value = probeData.artists.join(", ");
+          songAddRow.querySelector("#album").value = probeData.album;
+          songAddRow.querySelector("#genres").value = probeData.genres.join(", ");
+
+          songsToAdd.push({ data: data, form: songAddRow.children[0] });
+
+          table.appendChild(songAddRow);
+        }
+        console.log(`loop end`);
+      }
+
       dropzone.style.visibility = "hidden";
       dropzone.style.opacity = 0;
 
-      if (ev.dataTransfer.items) {
-        // Use DataTransferItemList interface to access the file(s)
-        [...ev.dataTransfer.items].forEach(async (item, i) => {
-          // If dropped items aren't files, reject them
-          if (item.kind === "file") {
-            const file = item.getAsFile();
-            console.log(`… file[${i}].name = ${file.name}`);
-
-            let dataUrl = await toDataUrl(file);
-            let data = await toBase64(file);
-            let probeData = await api("/api/probeSong", { song_data_base64: data });
-            console.log(probeData);
-
-            let songAddRow = addSongRowTemplate.content.cloneNode(true);
-            songAddRow.querySelector("audio").src = dataUrl;
-            songAddRow.querySelector("#filename").innerText = file.name;
-            songAddRow.querySelector("#title").value = probeData.title;
-            songAddRow.querySelector("#artists").value = probeData.artists.join(", ");
-            songAddRow.querySelector("#album").value = probeData.album;
-            songAddRow.querySelector("#genres").value = probeData.genres.join(", ");
-
-            songsToAdd.push({ data: data, form: songAddRow.children[0] });
-
-            table.appendChild(songAddRow);
-          }
-        });
-      } else {
-        // Use DataTransfer interface to access the file(s)
-        [...ev.dataTransfer.files].forEach((file, i) => {
-          console.log(`… file[${i}].name = ${file.name}`);
-        });
-      }
+      // if (ev.dataTransfer.items) {
+      //   // Use DataTransferItemList interface to access the file(s)
+      //   [...ev.dataTransfer.items].forEach(async (item, i) => {
+      //     // If dropped items aren't files, reject them
+      //     if (item.kind === "file") {
+      //       const file = item.getAsFile();
+      //       console.log(`… file[${i}].name = ${file.name}`);
+      //
+      //       let dataUrl = await toDataUrl(file);
+      //       let data = await toBase64(file);
+      //       let probeData = await api("/api/probeSong", { song_data_base64: data });
+      //       console.log(probeData);
+      //
+      //       let songAddRow = addSongRowTemplate.content.cloneNode(true);
+      //       songAddRow.querySelector("audio").src = dataUrl;
+      //       songAddRow.querySelector("#filename").innerText = file.name;
+      //       songAddRow.querySelector("#title").value = probeData.title;
+      //       songAddRow.querySelector("#artists").value = probeData.artists.join(", ");
+      //       songAddRow.querySelector("#album").value = probeData.album;
+      //       songAddRow.querySelector("#genres").value = probeData.genres.join(", ");
+      //
+      //       songsToAdd.push({ data: data, form: songAddRow.children[0] });
+      //
+      //       table.appendChild(songAddRow);
+      //     }
+      //   });
+      // } else {
+      //   // Use DataTransfer interface to access the file(s)
+      //   [...ev.dataTransfer.files].forEach((file, i) => {
+      //     console.log(`… file[${i}].name = ${file.name}`);
+      //   });
+      // }
     };
 
     document.body.appendChild(page);

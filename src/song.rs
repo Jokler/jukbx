@@ -7,18 +7,13 @@ use musicbrainz_rs_nova::{
         recording::{Recording, RecordingSearchQuery},
         release_group::{ReleaseGroup, ReleaseGroupSearchQuery},
     },
-    Browse, Search,
+    Search,
 };
-use petname::Generator;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cell::{LazyCell, OnceCell},
-    fmt::format,
     fs::{self, File},
-    io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom},
-    iter::Once,
-    ops::Range,
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
     sync::{LazyLock, Mutex},
     thread,
     time::Duration,
@@ -35,7 +30,7 @@ struct Data {
 }
 
 pub(crate) fn list(db: &Database, req: &mut Request) -> ResponseBox {
-    let r: ListDataRequest = crate::try_json!(req);
+    // let r: ListDataRequest = crate::try_json!(req);
 
     let json = db.get_all_json();
 
@@ -66,16 +61,14 @@ pub(crate) fn get_audio_page(db: &Database, req: &mut Request) -> ResponseBox {
 
             let html = get_audio_page_html(song);
 
-            return Response::from_string(html)
+            Response::from_string(html)
                 .with_header(
                     tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
                 )
                 .with_status_code(200)
-                .boxed();
+                .boxed()
         }
-        (None, _) => {
-            return Response::from_string("").with_status_code(404).boxed();
-        }
+        (None, _) => Response::from_string("").with_status_code(404).boxed(),
     }
 }
 
@@ -119,22 +112,27 @@ fn parse_range_header(header: &Header) -> anyhow::Result<HttpRange> {
 }
 
 pub(crate) fn get_audio_data(db: &Database, req: &mut Request) -> ResponseBox {
-    let Some(header) = req
+    let ip = if let Some(header) = req
         .headers()
         .iter()
         .find(|h| h.field == "x-real-ip".parse().unwrap())
-    else {
-        log::warn!("No IP header found");
-        return Response::from_string("").with_status_code(400).boxed();
+    {
+        header.value.as_str().to_owned()
+    } else {
+        let Some(addr) = req.remote_addr() else {
+            log::warn!("No IP header found");
+            return Response::from_string("").with_status_code(400).boxed();
+        };
+
+        addr.ip().to_string()
     };
 
     let range_header = req
         .headers()
         .iter()
         .find(|h| h.field == "Range".parse().unwrap())
-        .map(|h| parse_range_header(h));
+        .map(parse_range_header);
 
-    let ip = header.value.as_str();
     if !db.is_allowed(&ip) {
         debug!("IP {ip} is not allowed");
         return Response::from_string("").with_status_code(403).boxed();
@@ -143,14 +141,9 @@ pub(crate) fn get_audio_data(db: &Database, req: &mut Request) -> ResponseBox {
     debug!("Allowed {ip}");
 
     let url = req.url();
-    let mut components = url.split('/');
-    components.next();
-    components.next();
-    let Some(file) = components.next() else {
-        return Response::from_string("").with_status_code(404).boxed();
-    };
+    let file = url_escape::decode(&url[6..]).to_string();
 
-    let Ok(mut file) = File::open(format!("./songs/{}", file)) else {
+    let Ok(mut file) = File::open(file) else {
         return Response::from_string("").with_status_code(404).boxed();
     };
 
@@ -183,14 +176,14 @@ pub(crate) fn get_audio_data(db: &Database, req: &mut Request) -> ResponseBox {
                 };
 
                 let reader = BufReader::new(file);
-                return Response::new(
+                Response::new(
                     tiny_http::StatusCode(206),
                     headers,
                     reader.take(len),
                     None,
                     None,
                 )
-                .boxed();
+                .boxed()
             }
             HttpRange::Open { start } => {
                 let len = file_size as u64 - start;
@@ -208,13 +201,10 @@ pub(crate) fn get_audio_data(db: &Database, req: &mut Request) -> ResponseBox {
                 };
 
                 let reader = BufReader::new(file);
-                return Response::new(tiny_http::StatusCode(206), headers, reader, None, None)
-                    .boxed();
+                Response::new(tiny_http::StatusCode(206), headers, reader, None, None).boxed()
             }
             HttpRange::Negative { value } => todo!(),
         }
-
-        todo!()
     } else {
         Response::new(
             tiny_http::StatusCode(200),
@@ -242,6 +232,7 @@ struct ProbeSongResponse {
 
 fn get_metadata(song_data_base64: String) -> anyhow::Result<ProbeSongResponse> {
     let data = BASE64_STANDARD.decode(song_data_base64)?;
+    debug!("Probing for metdata");
 
     let probe = Probe::new(Cursor::new(data)).guess_file_type()?;
     let file = probe.read()?;
@@ -275,7 +266,7 @@ fn get_metadata(song_data_base64: String) -> anyhow::Result<ProbeSongResponse> {
                 .artist_credit
                 .map(|a| a.into_iter().map(|c| c.artist.name).collect())
                 .unwrap_or(artists),
-            album: album,
+            album,
             genres: rec
                 .genres
                 .map(|g| g.into_iter().map(|g| g.name).collect())
@@ -283,12 +274,12 @@ fn get_metadata(song_data_base64: String) -> anyhow::Result<ProbeSongResponse> {
         });
     }
 
-    return Ok(ProbeSongResponse {
+    Ok(ProbeSongResponse {
         title: Some(title.into_owned()),
         album: album.map(|a| a.into_owned()),
         artists: artist.map(|a| vec![a.into_owned()]).unwrap_or(vec![]),
         ..Default::default()
-    });
+    })
 }
 
 static BRAINZ_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -412,33 +403,33 @@ struct AddSongRequest {
     genres: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct AddSongResponse {}
-
 pub(crate) fn add(db: &Database, req: &mut Request) -> ResponseBox {
-    let username = crate::try_auth!(db, req);
+    let _username = crate::try_auth!(db, req);
     let r: AddSongRequest = crate::try_json!(req);
 
-    let extension = r.song_data_filename.split('.').last().unwrap();
+    let extension = r.song_data_filename.split('.').next_back().unwrap();
 
     require!(r.song_data_base64.len() < 1024 * 1024 * 130);
 
     let data = BASE64_STANDARD.decode(r.song_data_base64).unwrap();
-    let mut rng = rand::thread_rng();
-    let name = petname::Petnames::small()
-        .generate(&mut rng, 7, "-")
-        .expect("no names");
-    let path = format!("./songs/{}.{}", name, extension);
-    //let path = format!("./{}", r.song_file_name);
-    fs::write(&path, data).unwrap();
+    let path = format!("./songs/{}/{}/", r.artists.join(","), r.album,);
+    fs::create_dir_all(&path).unwrap();
 
-    db.add_song(&crate::data::SongEntry {
-        title: r.title.into(),
-        album: r.album.into(),
-        artists: r.artists.into_iter().map(|g| g.into()).collect(),
-        genres: r.genres.into_iter().map(|g| g.into()).collect(),
-        song_path: format!("{}.{}", name, extension).into(),
-    });
+    let file = format!("{path}{}.{}", r.title.replace("/", "_"), extension);
+    fs::write(&file, data).unwrap();
+
+    if db
+        .get_song_by_title_and_artist(&r.title, &r.artists[0])
+        .is_none()
+    {
+        db.add_song(&crate::data::SongEntry {
+            title: r.title.into(),
+            album: r.album.into(),
+            artists: r.artists.into_iter().map(|g| g.into()).collect(),
+            genres: r.genres.into_iter().map(|g| g.into()).collect(),
+            song_path: file.into(),
+        });
+    }
 
     Response::from_string("{}").with_status_code(200).boxed()
 }

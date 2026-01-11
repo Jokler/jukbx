@@ -1,16 +1,14 @@
 use std::{env, fs, thread};
 
+use base64::prelude::BASE64_STANDARD;
 use data::Database;
 use log::{debug, info};
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
-use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tiny_http::{Request, Response, ResponseBox};
 
-mod macros;
 mod data;
-use macros::*;
+mod macros;
 
 // mod category;
 // mod entries;
@@ -19,11 +17,12 @@ mod song;
 
 fn main() {
     env_logger::init();
-    musicbrainz_rs_nova::config::set_user_agent("jukbx/1.0 ( tmtu@tmtu.ee )");
+    musicbrainz_rs_nova::config::set_user_agent("jkbx/1.0 ( tmtu@tmtu.ee )");
 
-    info!("Starting jukbx");
+    info!("Starting jkbx");
 
-    let mut db = Database::open("./songs.csv".into(), "./users.csv".into(), "./whitelist.csv".into());
+    let users = std::env::var("USER_FILE").unwrap_or_else(|_| "./users.csv".to_string());
+    let db = Database::open("./songs.csv".into(), users.into(), "./whitelist.csv".into());
 
     let mut args = env::args();
     let _ = args.next();
@@ -59,24 +58,28 @@ fn main() {
                 req.url(),
                 response.status_code().0
             );
-    
+
             let _ = req.respond(response);
         });
     }
 }
 
-fn get_response(
-    db: Database,
-    req: &mut Request,
-) -> ResponseBox {
+fn get_response(db: Database, req: &mut Request) -> ResponseBox {
     let url = req.url();
     if url.ends_with("/") || url.ends_with("/index.html") {
         let content = fs::read("index.html").unwrap();
-        return Response::from_data(content).with_status_code(200).boxed();
+        return Response::from_data(content)
+            .with_status_code(200)
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
+            )
+            .boxed();
     }
 
     if url.ends_with("favicon.ico") {
-        return Response::from_data(include_bytes!("../favicon.ico")).with_status_code(200).boxed();
+        return Response::from_data(include_bytes!("../favicon.ico"))
+            .with_status_code(200)
+            .boxed();
     }
 
     if let Some((_, path)) = url.split_once("/") {
@@ -141,6 +144,6 @@ fn update_password(db: &Database, req: &mut Request) -> ResponseBox {
     let base64_pass = base64::encode(hashed_pass);
 
     db.update_user(&user, &base64_pass);
-    
+
     Response::from_string("{}").with_status_code(200).boxed()
 }

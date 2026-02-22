@@ -5,12 +5,10 @@
   lib ? pkgs.lib,
   ...
 }:
-with lib;
-let
+with lib; let
   cfg = config.services.jkbx;
   defaultUser = "jkbx";
-in
-{
+in {
   ###### interface
   options = {
     services.jkbx = {
@@ -20,6 +18,12 @@ in
         description = ''
           Whether to run jkbx on boot.
         '';
+      };
+
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.callPackage ../package.nix {};
+        description = "jkbx package";
       };
 
       user = mkOption {
@@ -79,7 +83,7 @@ in
           type = types.submodule (
             recursiveUpdate (import (modulesPath + "/services/web-servers/nginx/vhost-options.nix") {
               inherit config lib;
-            }) { }
+            }) {}
           );
           example = literalExpression ''
             {
@@ -101,12 +105,12 @@ in
 
   config = mkIf cfg.enable {
     systemd.services.jkbx = {
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      wantedBy = ["multi-user.target"];
+      after = ["network-online.target"];
+      wants = ["network-online.target"];
       description = "Music host for pokebot";
       serviceConfig = {
-        ExecStart = "${pkgs.jkbx}/bin/jkbx";
+        ExecStart = "${lib.getExe cfg.package}";
         Restart = "always";
         RestartSec = 10;
 
@@ -130,7 +134,7 @@ in
         ProtectKernelTunables = true;
         ProtectProc = "invisible";
         RemoveIPC = true;
-        RestrictAddressFamilies = [ ];
+        RestrictAddressFamilies = [];
         RestrictNamespaces = true;
         RestrictRealtime = true;
         NoNewPrivileges = true;
@@ -151,7 +155,7 @@ in
 
     users.groups = optionalAttrs (cfg.user == defaultUser) {
       ${defaultUser} = {
-        members = [ defaultUser ];
+        members = [defaultUser];
       };
     };
 

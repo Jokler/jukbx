@@ -19,13 +19,13 @@
     overlays.default = final: prev: {jkbx = final.callPackage ./package.nix {};};
 
     packages = forEachSystem (system: {
-      jkbx = pkgsBySystem.${system}.jkbx;
+      inherit (pkgsBySystem.${system}) jkbx;
       default = pkgsBySystem.${system}.jkbx;
     });
     devShells = forEachSystem (system: {
       default = pkgsBySystem.${system}.callPackage ./shell.nix {};
     });
 
-    nixosModules = import ./nixos-modules {overlays = overlayList;};
+    nixosModules.default = import ./nixos-modules/jkbx-service.nix;
   };
 }
